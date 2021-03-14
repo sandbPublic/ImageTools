@@ -46,7 +46,7 @@ def extend_colors(im, scale=1):
 # each rgb value is mapped by linear combination to new value
 def linear_map_colors(im, matrix, normalize=True):
     if im.mode != 'RGB':
-        print(f'convering mode from {im.mode} to rgb')
+        print(f'converting mode from {im.mode} to rgb')
         im = im.convert('RGB')
 
     # normalize mapping
@@ -131,7 +131,7 @@ def box_swap_hsv(color: Tuple[int], source_box: List, target_box: List) -> Tuple
 
 
 # values are considered outside if the sum of their deviations from an inner box are too large
-# in 2d, forms a rectangle with vertices cut to form an octogon
+# in 2d, forms a rectangle with vertices cut to form an octagon
 # low laxness cuts vertices more:
 # laxness of 0   -> never inside
 # laxness of 1   -> inside if m - x + M < 0 => x > M + m
@@ -156,8 +156,8 @@ def box_truncated_swap_hsv(color: Tuple[int], source_box: List, target_box: List
 
     deviation = 0
     for i in range(3):
-        deviation += max(0, (source_box[2*i] - return_color[i]) * laxness[2 * i] + MAX_DEVIATION)  # if below minimum
-        deviation += max(0, (return_color[i] - source_box[2*i + 1]) * laxness[2 * i + 1] + MAX_DEVIATION) # if above maximum
+        deviation += max(0, (source_box[2*i] - return_color[i]) * laxness[2 * i] + MAX_DEVIATION)
+        deviation += max(0, (return_color[i] - source_box[2*i + 1]) * laxness[2 * i + 1] + MAX_DEVIATION)
 
         if deviation > MAX_DEVIATION:  # average of 8 deviation in each dimension
             return color
@@ -213,17 +213,17 @@ def box_swap_hsv_fuzzy(color, source_box: List, target_box: List, fuzzy_bands: L
     return tuple(return_color)
 
 
-FILE_PREFIX = 'image0'
+FILE_PREFIX = 'image3'
 
 
-# converts very unsaturated or very dark pixels only,
+# converts very unsaturated or very dark pixels only which are outside desired hue range
 # which otherwise in rgb would have arbitrary or 0 hue when they shouldn't
 def convert_greys(im, bounding_box, mask_array,
-                  target_hue, hue_tolerance, sat_tolerance, val_tolerance):
-    byte_target_hue = int(target_hue*32/45)  # convert from 360 to byte
-    hue_tolerance = int(hue_tolerance*32/45)
-    sat_tolerance = int(sat_tolerance*64/25)  # convert from 100 to byte
-    val_tolerance = int(val_tolerance*64/25)  # convert from 100 to byte
+                  hue_min, hue_max, sat_min, val_min):
+    hue_min = int(hue_min*32/45)  # convert from 360 to byte
+    hue_max = int(hue_max*32/45)  # convert from 360 to byte
+    sat_min = int(sat_min*64/25)  # convert from 100 to byte
+    val_min = int(val_min*64/25)  # convert from 100 to byte
 
     im = im.convert('HSV')
     marker = Image.new(mode="L", size=im.size, color=0)
@@ -234,16 +234,33 @@ def convert_greys(im, bounding_box, mask_array,
             if mask_array[x][y]:
                 coord = (x,y)
                 hsv = im.getpixel(coord)
-                if hsv[1] < sat_tolerance or hsv[2] < val_tolerance:
-                    hue_diff = abs(hsv[0] - byte_target_hue)
-                    if min(hue_diff, 256-hue_diff) > hue_tolerance:
+                marker.putpixel(coord, 127)
+
+                if hsv[1] < sat_min or hsv[2] < val_min:
+                    new_hue = hsv[0]
+                    hue_mid = (hue_min + hue_max)/2
+                    while new_hue < hue_mid - 128:
+                        new_hue += 256
+                    while new_hue > hue_mid + 128:
+                        new_hue -= 256
+
+                    needs_change = False
+                    if new_hue < hue_min:
+                        new_hue = hue_min
+                        needs_change = True
+
+                    if new_hue > hue_max:
+                        new_hue = hue_max
+                        needs_change = True
+
+                    if needs_change:
                         # need some saturation and value to avoid degenerate HSV regions so hue can be reconstructed
-                        im.putpixel(coord, (byte_target_hue, max(2, hsv[1]), min(max(2, hsv[2]), 253)))
+                        im.putpixel(coord, (new_hue % 256, max(2, hsv[1]), max(2, hsv[2])))
                         marker.putpixel(coord, 255)
                         pixels_converted += 1
 
     im = im.convert('RGB')
-    im.save(FILE_PREFIX + f'setWhiteBlackTo{target_hue:3d}.png')
+    im.save(FILE_PREFIX + f'setWhiteBlackTo{hue_min:3d}to{hue_max:3d}.png')
     marker.save(FILE_PREFIX + "_marker.png")
     print(f'{pixels_converted} pixels converted')
 
@@ -300,7 +317,7 @@ def create_spectra():
     im = im.convert('RGB')
     im.save('spectrum2.png')
 
-    im = Image.open(('spectrum.png'))
+    im = Image.open('spectrum.png')
     im = im.convert('HSV')
     im = map_pixels(im, lambda c: box_swap_hsv(c,
                                                [100, 156, 0, 255, 0, 255],
@@ -345,7 +362,7 @@ def create_hue_rotations(rotation_amount=24):
 
 
 def run():
-    source_box = [220, 280, 5, 76, 20, 95]
+    source_box = [190, 350, 0, 75, 15, 100]
     byte_source_box = convert_hsv_box_to_bytes(source_box)
 
     try:
@@ -362,16 +379,16 @@ def run():
         im = Image.open(FILE_PREFIX + '.png')
     im = im.convert('HSV')
 
-    #create_composite_mask(im, mask, byte_source_box)
-    #exit(0)
+    # create_composite_mask(im, mask, byte_source_box)
+    # exit(0)
 
     bounding_box = [mask.size[0], 0, mask.size[1], 0]
     mask_array = [[False for y in range(mask.size[1])] for x in range(mask.size[0])]
     coord_list = []
     hsv_list = []
 
-    combine_mask_with_box = True
-    if combine_mask_with_box:
+    combine_mask_with_source_box = True
+    if combine_mask_with_source_box:
         for x in range(mask.size[0]):
             for y in range(mask.size[1]):
                 coord = (x, y)
@@ -427,8 +444,9 @@ def run():
     bounding_box[1] += 1
     bounding_box[3] += 1
 
-    #convert_greys(im, bounding_box, mask_array, 15, 20, 12, 12)
-    #exit(0)
+    if not combine_mask_with_source_box:
+        convert_greys(im, bounding_box, mask_array, source_box[0], source_box[1], 9, 9)
+        exit(0)
 
     target_boxes = []
 
@@ -460,7 +478,7 @@ def run():
     lo_val_range = convert_range(source_box[4], source_box[5], 30)
 
     num_hues = 18
-    even_spaced_hues = [hue for hue in range(0, 360, 360 // num_hues)]
+    # even_spaced_hues = [hue for hue in range(0, 360, 360 // num_hues)]
     uneven_spaced_hues = [hue for hue in range(-60, 120, 270 // num_hues)]
     uneven_spaced_hues.extend([hue for hue in range(120, 300, 540 // num_hues)])
 
@@ -512,6 +530,6 @@ def run():
         im.save(filename)
         print(filename)
 
-#run()
-cProfile.run('run()', sort='tottime')
 
+run()
+# cProfile.run('run()', sort='tottime')
