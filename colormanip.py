@@ -213,7 +213,17 @@ def box_swap_hsv_fuzzy(color, source_box: List, target_box: List, fuzzy_bands: L
     return tuple(return_color)
 
 
-FILE_PREFIX = 'image3'
+FILE_PREFIX = 'image28'
+
+
+# returns hue which is congruent mod m which is nearest to center of min and max
+def hue_nearest_bands(old_hue, hue_min, hue_max, m=256):
+    hue_mid = (hue_min + hue_max)/2
+    while old_hue < hue_mid - m/2:
+        old_hue += m
+    while old_hue > hue_mid + m/2:
+        old_hue -= m
+    return old_hue
 
 
 # converts very unsaturated or very dark pixels only which are outside desired hue range
@@ -237,12 +247,7 @@ def convert_greys(im, bounding_box, mask_array,
                 marker.putpixel(coord, 127)
 
                 if hsv[1] < sat_min or hsv[2] < val_min:
-                    new_hue = hsv[0]
-                    hue_mid = (hue_min + hue_max)/2
-                    while new_hue < hue_mid - 128:
-                        new_hue += 256
-                    while new_hue > hue_mid + 128:
-                        new_hue -= 256
+                    new_hue = hue_nearest_bands(hsv[0], hue_min, hue_max)
 
                     needs_change = False
                     if new_hue < hue_min:
@@ -266,36 +271,33 @@ def convert_greys(im, bounding_box, mask_array,
 
 
 # construct a compound mask:
-# everything indicated by the initial mask AND in source box is black
-# in source box but not in initial mask = red
-# in initial mask but not source box = green
+# included or excluded in the initial mask remains the same
+# conditional in initial mask and in source box = green
+# conditional in initial mask but not in source box = red
 def create_composite_mask(im, mask, byte_source_box: List[int],
-                          box_not_mask_color=(255, 0, 0), mask_not_box_color=(0, 255, 0)):
+                          out_source_color=(255, 0, 0), in_source_color=(0, 255, 0)):
 
     mask = mask.convert('RGB')
     im = im.convert('HSV')
     for x in range(mask.size[0]):
         for y in range(mask.size[1]):
             coord = (x, y)
-            isInMask = mask.getpixel(coord)[0] < 128
-            isInBox = True
 
-            imageColor = list(im.getpixel(coord))
-            # when considering a point relative to a range, abs(min - point) <= 128, abs(max - point) <= 128
-            while imageColor[0] < byte_source_box[0] - 128:
-                imageColor[0] += 256
-            while imageColor[0] > byte_source_box[1] + 128:
-                imageColor[0] -= 256
+            mask_rgb = mask.getpixel(coord)
+            if pixel_excluded(mask_rgb) or pixel_included(mask_rgb):
+                mask.putpixel(coord, mask_rgb)
+                continue
 
-            for i in range(3):
-                if imageColor[i] < byte_source_box[2 * i] or byte_source_box[2 * i + 1] < imageColor[i]:
-                    isInBox = False
-                    break
+            image_hsv = list(im.getpixel(coord))
+            image_hsv[0] = hue_nearest_bands(image_hsv[0], byte_source_box[0], byte_source_box[1])
 
-            if not isInMask and isInBox:
-                mask.putpixel(coord, box_not_mask_color)
-            if isInMask and not isInBox:
-                mask.putpixel(coord, mask_not_box_color)
+            if byte_source_box[0] <= image_hsv[0] <= byte_source_box[1] and \
+                    byte_source_box[2] <= image_hsv[1] <= byte_source_box[3] and \
+                    byte_source_box[4] <= image_hsv[2] <= byte_source_box[5]:
+                mask.putpixel(coord, in_source_color)
+            else:
+                mask.putpixel(coord, out_source_color)
+
     mask.save(FILE_PREFIX + 'mask_compound.png')
 
 
@@ -360,9 +362,16 @@ def create_hue_rotations(rotation_amount=24):
         im = im.convert('RGB')
         im.save(FILE_PREFIX + f'_rot{i:03d}.png')
 
+# mask white: force exclusion of this pixel
+def pixel_excluded(rgb):
+    return rgb[0] >= 128  # too red to be either green or black
+
+# mask black: force inclusion of this pixel
+def pixel_included(rgb):
+    return rgb[1] < 128  # not enough green to be white or green
 
 def run():
-    source_box = [190, 350, 0, 75, 15, 100]
+    source_box = [230, 330, 10, 60, 5, 85]
     byte_source_box = convert_hsv_box_to_bytes(source_box)
 
     try:
@@ -392,25 +401,20 @@ def run():
         for x in range(mask.size[0]):
             for y in range(mask.size[1]):
                 coord = (x, y)
-                isInMask = mask.getpixel(coord)[0] < 128
-                isInBox = True
 
-                imageColor = list(im.getpixel(coord))
-                # when considering a point relative to a range, abs(min - point) <= 128, abs(max - point) <= 128
-                while imageColor[0] < byte_source_box[0] - 128:
-                    imageColor[0] += 256
-                while imageColor[0] > byte_source_box[1] + 128:
-                    imageColor[0] -= 256
+                mask_rgb = mask.getpixel(coord)
+                if pixel_excluded(mask_rgb):
+                    continue
 
-                for i in range(3):
-                    if imageColor[i] < byte_source_box[2 * i] or byte_source_box[2 * i + 1] < imageColor[i]:
-                        isInBox = False
-                        break
-
-                if isInMask and isInBox:
+                image_hsv = list(im.getpixel(coord))
+                image_hsv[0] = hue_nearest_bands(image_hsv[0], byte_source_box[0], byte_source_box[1])
+                if pixel_included(mask_rgb) or \
+                        (byte_source_box[0] <= image_hsv[0] <= byte_source_box[1] and
+                         byte_source_box[2] <= image_hsv[1] <= byte_source_box[3] and
+                         byte_source_box[4] <= image_hsv[2] <= byte_source_box[5]):
                     mask_array[x][y] = True
                     coord_list.append(coord)
-                    hsv_list.append(tuple(imageColor))
+                    hsv_list.append((image_hsv[0] % 256, image_hsv[1] % 256, image_hsv[2] % 256))
                     if bounding_box[0] > x:
                         bounding_box[0] = x
                     if bounding_box[1] < x:
@@ -423,11 +427,10 @@ def run():
         for x in range(mask.size[0]):
             for y in range(mask.size[1]):
                 coord = (x, y)
-                if mask.getpixel(coord)[0] < 128:
-                    imageColor = list(im.getpixel(coord))
+                if pixel_included(mask.getpixel(coord)):
                     mask_array[x][y] = True
                     coord_list.append(coord)
-                    hsv_list.append(tuple(imageColor))
+                    hsv_list.append(im.getpixel(coord))
                     if bounding_box[0] > x:
                         bounding_box[0] = x
                     if bounding_box[1] < x:
@@ -531,5 +534,6 @@ def run():
         print(filename)
 
 
-run()
-# cProfile.run('run()', sort='tottime')
+if __name__ == '__main__':
+    run()
+    # cProfile.run('run()', sort='tottime')
