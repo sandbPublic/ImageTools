@@ -213,7 +213,7 @@ def box_swap_hsv_fuzzy(color, source_box: List, target_box: List, fuzzy_bands: L
     return tuple(return_color)
 
 
-FILE_PREFIX = 'image28'
+FILE_PREFIX = 'imageA'
 
 
 # returns hue which is congruent mod m which is nearest to center of min and max
@@ -224,6 +224,47 @@ def hue_nearest_bands(old_hue, hue_min, hue_max, m=256):
     while old_hue > hue_mid + m/2:
         old_hue -= m
     return old_hue
+
+
+def create_histograms(im, height=256):
+    im = im.convert('HSV')
+
+    hues = [0] * 256
+    sats = [0] * 256
+    vals = [0] * 256
+
+    for x in range(im.size[0]):
+        for y in range(im.size[1]):
+            hsv = im.getpixel((x,y))
+
+            hues[hsv[0]] += 1
+            sats[hsv[1]] += 1
+            vals[hsv[2]] += 1
+
+    histo_hues = Image.new(mode='HSV', size=(256, height), color=(0, 0, 255))  # white
+    histo_sats = Image.new(mode='HSV', size=(256, height), color=(0, 0, 0))  # black
+    histo_vals = Image.new(mode='HSV', size=(256, height), color=(80, 255, 255))  # green
+
+    drawh = ImageDraw.Draw(histo_hues)
+    draws = ImageDraw.Draw(histo_sats)
+    drawv = ImageDraw.Draw(histo_vals)
+
+    h_scale = (height - 1) / max(hues)
+    s_scale = (height - 1) / max(sats)
+    v_scale = (height - 1) / max(vals)
+
+    for i in range(256):
+        drawh.line([i, height - 1, i, height - 1 - int(hues[i] * h_scale)], (i, 255, 255))
+        draws.line([i, height - 1, i, height - 1 - int(sats[i] * s_scale)], (0, i, 255))
+        drawv.line([i, height - 1, i, height - 1 - int(vals[i] * v_scale)], (0, 0, i))
+
+    histo_hues = histo_hues.convert('RGB')
+    histo_hues.save('FILE_PREFIX_histogram_hues.png')
+    histo_sats = histo_sats.convert('RGB')
+    histo_sats.save('FILE_PREFIX_histogram_sats.png')
+    histo_vals = histo_vals.convert('RGB')
+    histo_vals.save('FILE_PREFIX_histogram_vals.png')
+
 
 
 # converts very unsaturated or very dark pixels only which are outside desired hue range
@@ -375,18 +416,21 @@ def run():
     byte_source_box = convert_hsv_box_to_bytes(source_box)
 
     try:
-        mask = Image.open((FILE_PREFIX + 'mask2.png'))
-        print('using alternate mask')
-    except FileNotFoundError:
-        mask = Image.open((FILE_PREFIX + 'mask.png'))
-    mask = mask.convert('RGB')
-
-    try:
         im = Image.open(FILE_PREFIX + 'a.png')  # alternate or edited image
         print('using alternate image')
     except FileNotFoundError:
         im = Image.open(FILE_PREFIX + '.png')
     im = im.convert('HSV')
+
+    create_histograms(im)
+    exit(0)
+
+    try:
+        mask = Image.open((FILE_PREFIX + 'mask2.png'))
+        print('using alternate mask')
+    except FileNotFoundError:
+        mask = Image.open((FILE_PREFIX + 'mask.png'))
+    mask = mask.convert('RGB')
 
     # create_composite_mask(im, mask, byte_source_box)
     # exit(0)
