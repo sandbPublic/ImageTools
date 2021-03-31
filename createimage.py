@@ -33,7 +33,7 @@ def create_spectra():
     im.save('spectrum3.png')
 
 
-def create_histograms(im, height=256):
+def create_histograms(im, top_pixel=255):
     im = im.convert('HSV')
 
     hues = [0] * 256
@@ -48,29 +48,52 @@ def create_histograms(im, height=256):
             sats[hsv[1]] += 1
             vals[hsv[2]] += 1
 
-    histo_hues = Image.new(mode='HSV', size=(256, height), color=(0, 0, 255))  # white
-    histo_sats = Image.new(mode='HSV', size=(256, height), color=(0, 0, 0))  # black
-    histo_vals = Image.new(mode='HSV', size=(256, height), color=(80, 255, 255))  # green
+    histo_hues = Image.new(mode='HSV', size=(256, top_pixel+1), color=(0, 0, 255))  # white
+    histo_sats = Image.new(mode='HSV', size=(256, top_pixel+1), color=(0, 0, 0))  # black
+    histo_vals = Image.new(mode='HSV', size=(256, top_pixel+1), color=(80, 255, 255))  # green
 
     drawh = ImageDraw.Draw(histo_hues)
     draws = ImageDraw.Draw(histo_sats)
     drawv = ImageDraw.Draw(histo_vals)
 
-    h_scale = (height - 1) / max(hues)
-    s_scale = (height - 1) / max(sats)
-    v_scale = (height - 1) / max(vals)
+    h_scale = top_pixel / max(hues)
+    s_scale = top_pixel / max(sats)
+    v_scale = top_pixel / max(vals)
 
     for i in range(256):
-        drawh.line([i, height - 1, i, height - 1 - int(hues[i] * h_scale)], (i, 255, 255))
-        draws.line([i, height - 1, i, height - 1 - int(sats[i] * s_scale)], (0, i, 255))
-        drawv.line([i, height - 1, i, height - 1 - int(vals[i] * v_scale)], (0, 0, i))
+        drawh.line([i, top_pixel, i, top_pixel - int(hues[i] * h_scale)], (i, 255, 255))
+        draws.line([i, top_pixel, i, top_pixel - int(sats[i] * s_scale)], (0, i, 255))
+        drawv.line([i, top_pixel, i, top_pixel - int(vals[i] * v_scale)], (0, 0, i))
 
     histo_hues = histo_hues.convert('RGB')
-    histo_hues.save('FILE_PREFIX_histogram_hues.png')
+    histo_hues.save(FILE_PREFIX + '_histogram_hues.png')
     histo_sats = histo_sats.convert('RGB')
-    histo_sats.save('FILE_PREFIX_histogram_sats.png')
+    histo_sats.save(FILE_PREFIX + '_histogram_sats.png')
     histo_vals = histo_vals.convert('RGB')
-    histo_vals.save('FILE_PREFIX_histogram_vals.png')
+    histo_vals.save(FILE_PREFIX + '_histogram_vals.png')
+
+
+def create_scatterplots(im):
+    im = im.convert('HSV')
+
+    scatter_hs = Image.new(mode='HSV', size=(256, 256), color=(0, 0, 0))  # black, pixels in plot have v set to 255
+    scatter_sv = Image.new(mode='HSV', size=(256, 256), color=(80, 255, 255))  # green, pixels have h set to 0
+    scatter_hv = Image.new(mode='HSV', size=(256, 256), color=(0, 0, 255))  # white, pixels have s set to 255
+
+    for x in range(im.size[0]):
+        for y in range(im.size[1]):
+            hsv = im.getpixel((x,y))
+            scatter_hs.putpixel((hsv[0], hsv[1]), (hsv[0], hsv[1], 255))
+            scatter_sv.putpixel((hsv[1], hsv[2]), (0, hsv[1], hsv[2]))
+            scatter_hv.putpixel((hsv[0], hsv[2]), (hsv[0], 255, hsv[2]))
+
+    scatter_hs = scatter_hs.convert('RGB')
+    scatter_hs.save(FILE_PREFIX + '_scatter_hs.png')
+    scatter_sv = scatter_sv.convert('RGB')
+    scatter_sv.save(FILE_PREFIX + '_scatter_sv.png')
+    scatter_hv = scatter_hv.convert('RGB')
+    scatter_hv.save(FILE_PREFIX + '_scatter_hv.png')
+
 
 # construct a compound mask:
 # included or excluded in the initial mask remains the same
@@ -203,6 +226,7 @@ def run():
     im = im.convert('HSV')
 
     create_histograms(im)
+    create_scatterplots(im)
     exit(0)
 
     try:
