@@ -221,5 +221,6 @@ def run(file_prefix):
     im.save(file_prefix + f'_voronoized{len(v_points)}.png')
 
 
-#run('imageA')
-cProfile.run('run(\'imageA\')', sort='tottime')
+if __name__ == '__main__':
+    #run('imageA')
+    cProfile.run('run(\'imageA\')', sort='tottime')
