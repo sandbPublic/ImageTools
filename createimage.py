@@ -2,7 +2,7 @@ from PIL import Image, ImageDraw
 from typing import Tuple, List, Callable
 import colormanip as cm
 
-FILE_PREFIX = 'image13'
+FILE_PREFIX = 'image29'
 
 
 def create_spectra():
@@ -264,13 +264,13 @@ def preprocess_image_and_mask(im, mask, byte_source_box=None):
 
 
 def target_boxes(source_box):
-    target_boxes = []
+    trgt_bxs = []
 
-    hue_range = int((source_box[1] - source_box[0]) / 1)
+    hue_range = int((source_box[1] - source_box[0]) / 1)  # can contract or expand
 
-    target_boxes.append([source_box[0], source_box[1], 0, 10, 0, 35, 'black'])
-    target_boxes.append([source_box[0], source_box[1], 0, 10, 30, 70, 'grey'])
-    target_boxes.append([source_box[0], source_box[1], 0, 10, 65, 100, 'white'])
+    trgt_bxs.append([source_box[0], source_box[1], 0, 10, 0, 35, 'black'])
+    trgt_bxs.append([source_box[0], source_box[1], 0, 10, 30, 70, 'grey'])
+    trgt_bxs.append([source_box[0], source_box[1], 0, 10, 65, 100, 'white'])
 
     def convert_range(source_lo, source_hi, target_mid):
         radius = (source_hi - source_lo) // 2
@@ -296,21 +296,21 @@ def target_boxes(source_box):
         hue_start = hue - hue_range // 2
         hue_end = hue_start + hue_range
 
-        target_boxes.append(
+        trgt_bxs.append(
             [hue_start, hue_end, source_box[2], source_box[3], source_box[4], source_box[5], 'sameSV'])
-        target_boxes.append(
+        trgt_bxs.append(
             [hue_start, hue_end, hi_sat_range[0], hi_sat_range[1], hi_val_range[0], hi_val_range[1], 'bright'])
-        target_boxes.append(
+        trgt_bxs.append(
             [hue_start, hue_end, lo_sat_range[0], lo_sat_range[1], hi_val_range[0], hi_val_range[1], 'light'])
-        target_boxes.append(
+        trgt_bxs.append(
             [hue_start, hue_end, hi_sat_range[0], hi_sat_range[1], lo_val_range[0], lo_val_range[1], 'dark'])
-        target_boxes.append(
+        trgt_bxs.append(
             [hue_start, hue_end, lo_sat_range[0], lo_sat_range[1], lo_val_range[0], lo_val_range[1], 'dull'])
 
-    return target_boxes
+    return trgt_bxs
 
 
-def create_color_swap(im, target_box, byte_source_box, coord_list, hsv_list):
+def create_color_swap(im, target_box, byte_source_box, coord_list, hsv_list, create_conversion_guide=False):
     im = im.convert('HSV')
 
     filename = FILE_PREFIX + f'_h{target_box[0] % 360:03d}_{target_box[1] % 360:03d}' \
@@ -322,13 +322,38 @@ def create_color_swap(im, target_box, byte_source_box, coord_list, hsv_list):
     # precompute conversions for each possible byte for HSV
     converted_hsv = [[], [], []]
     for b in range(256):
-        for i in range(3):
-            # scale coordinates to 0,1 relative to source box
-            scale = cm.weighted_average_factor(b, byte_source_box[2 * i], byte_source_box[2 * i + 1])
-            # scale to absolute coordinates using target box
-            converted = int(
-                cm.linear_combination(byte_target_box[2 * i], byte_target_box[2 * i + 1], scale)) % 256
-            converted_hsv[i].append(converted)
+        hue = cm.hue_nearest_bands(b, byte_source_box[0], byte_source_box[1])
+
+        # scale coordinates to 0,1 relative to source box
+        scale = cm.weighted_average_factor(hue, byte_source_box[0], byte_source_box[1])
+        # scale to absolute coordinates using target box
+        converted = int(cm.linear_combination(byte_target_box[0], byte_target_box[1], scale)) % 256
+        converted_hsv[0].append(converted)
+
+        scale = cm.weighted_average_factor(b, byte_source_box[2], byte_source_box[3])
+        converted = int(cm.linear_combination(byte_target_box[2], byte_target_box[3], scale))
+        converted_hsv[1].append(max(min(converted, 255), 0))
+
+        scale = cm.weighted_average_factor(b, byte_source_box[4], byte_source_box[5])
+        converted = int(cm.linear_combination(byte_target_box[4], byte_target_box[5], scale))
+        converted_hsv[2].append(max(min(converted, 255), 0))
+
+    if create_conversion_guide:
+        column_size = 16
+
+        im2 = Image.new(mode="HSV", size=(256, 6*column_size), color=(0, 0, 0))
+        drawer = ImageDraw.Draw(im2)
+
+        for x in range(256):
+            drawer.line([x, 0 * column_size, x, 1 * column_size - 1], (x, 255, 255))
+            drawer.line([x, 1 * column_size, x, 2 * column_size - 1], (converted_hsv[0][x], 255, 255))
+            drawer.line([x, 2 * column_size, x, 3 * column_size - 1], (0, x, 255))
+            drawer.line([x, 3 * column_size, x, 4 * column_size - 1], (0, converted_hsv[1][x], 255))
+            drawer.line([x, 4 * column_size, x, 5 * column_size - 1], (0, 0, x))
+            drawer.line([x, 5 * column_size, x, 6 * column_size - 1], (0, 0, converted_hsv[2][x]))
+
+        im2 = im2.convert('RGB')
+        im2.save(f'conversion_guideB{filename}')
 
     for coord, hsv in zip(coord_list, hsv_list):
         im.putpixel(coord, (converted_hsv[0][hsv[0]], converted_hsv[1][hsv[1]], converted_hsv[2][hsv[2]]))
@@ -357,7 +382,7 @@ def run():
         mask = Image.open((FILE_PREFIX + 'mask.png'))
     mask = mask.convert('RGB')
 
-    source_box = [18, 66, 10, 86, 40, 100]
+    source_box = [-20, 30, 15, 75, 0, 70]
     byte_source_box = cm.convert_hsv_box_to_bytes(source_box)
 
     # create_composite_mask(im, mask, byte_source_box)
