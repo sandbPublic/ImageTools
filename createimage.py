@@ -362,7 +362,7 @@ def create_color_swap(im, target_box, byte_source_box, coord_list, hsv_list, cre
     im.save(filename)
     print(filename)
 
-
+# todo get filenames from input()
 def run():
     try:
         im = Image.open(FILE_PREFIX + 'a.png')  # alternate or edited image
@@ -394,12 +394,7 @@ def run():
     # exit(0)
 
     for target_box in target_boxes(source_box):
-        try:
-            im = Image.open(FILE_PREFIX + 'a.png')  # alternate or edited image
-        except FileNotFoundError:
-            im = Image.open(FILE_PREFIX + '.png')
-
-        create_color_swap(im, target_box, byte_source_box, coord_list, hsv_list)
+        create_color_swap(im.copy(), target_box, byte_source_box, coord_list, hsv_list)
 
 
 if __name__ == '__main__':
