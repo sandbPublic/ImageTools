@@ -212,7 +212,7 @@ def box_swap_hsv_fuzzy(color, source_box: List, target_box: List, fuzzy_bands: L
 
 
 # returns hue which is congruent mod m which is nearest to center of min and max
-def hue_nearest_bands(old_hue, hue_min, hue_max, m=256):
+def hue_nearest_bands(old_hue: int, hue_min: int, hue_max: int, m=256) -> int:
     hue_mid = (hue_min + hue_max)/2
     while old_hue < hue_mid - m/2:
         old_hue += m
