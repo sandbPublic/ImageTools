@@ -4,7 +4,7 @@ from typing import Tuple, List
 import colormanip as cm
 from dataclasses import dataclass
 
-FILE_PREFIX = 'image10'
+FILE_PREFIX = 'imageA'
 
 @dataclass
 class HSV:
@@ -40,21 +40,25 @@ def create_spectra():
     im.save('spectrum3.png')
 
 
-def create_histograms(im, mask_array=None, top_pixel=255):
+def create_histograms(im, hsv_list=None, top_pixel=255):
     im = im.convert('HSV')
 
     hues = [0] * 256
     sats = [0] * 256
     vals = [0] * 256
 
-    for x in range(im.size[0]):
-        for y in range(im.size[1]):
-            if mask_array is None or mask_array[x][y]:
+    if hsv_list is None:
+        for x in range(im.size[0]):
+            for y in range(im.size[1]):
                 hsv = im.getpixel((x, y))
-
                 hues[hsv[0]] += 1
                 sats[hsv[1]] += 1
                 vals[hsv[2]] += 1
+    else:
+        for hsv in hsv_list:
+            hues[hsv[0]] += 1
+            sats[hsv[1]] += 1
+            vals[hsv[2]] += 1
 
     histo_hues = Image.new(mode='HSV', size=(256, top_pixel + 1), color=(0, 0, 255))  # white
     histo_sats = Image.new(mode='HSV', size=(256, top_pixel + 1), color=(0, 0, 0))  # black
@@ -81,20 +85,25 @@ def create_histograms(im, mask_array=None, top_pixel=255):
     histo_vals.save(FILE_PREFIX + '_histogram_vals.png')
 
 
-def create_scatterplots(im, mask_array=None):
+def create_scatterplots(im, hsv_list=None):
     im = im.convert('HSV')
 
     scatter_hs = Image.new(mode='HSV', size=(256, 256), color=(0, 0, 0))  # black, pixels in plot have v set to 255
     scatter_sv = Image.new(mode='HSV', size=(256, 256), color=(80, 255, 255))  # green, pixels have h set to 0
     scatter_hv = Image.new(mode='HSV', size=(256, 256), color=(0, 0, 255))  # white, pixels have s set to 255
 
-    for x in range(im.size[0]):
-        for y in range(im.size[1]):
-            if mask_array is None or mask_array[x][y]:
+    if hsv_list is None:
+        for x in range(im.size[0]):
+            for y in range(im.size[1]):
                 hsv = im.getpixel((x, y))
                 scatter_hs.putpixel((hsv[0], hsv[1]), (hsv[0], hsv[1], 255))
                 scatter_sv.putpixel((hsv[1], hsv[2]), (0, hsv[1], hsv[2]))
                 scatter_hv.putpixel((hsv[0], hsv[2]), (hsv[0], 255, hsv[2]))
+    else:
+        for hsv in hsv_list:
+            scatter_hs.putpixel((hsv[0], hsv[1]), (hsv[0], hsv[1], 255))
+            scatter_sv.putpixel((hsv[1], hsv[2]), (0, hsv[1], hsv[2]))
+            scatter_hv.putpixel((hsv[0], hsv[2]), (hsv[0], 255, hsv[2]))
 
     scatter_hs = scatter_hs.convert('RGB')
     scatter_hs.save(FILE_PREFIX + '_scatter_hs.png')
@@ -102,6 +111,16 @@ def create_scatterplots(im, mask_array=None):
     scatter_sv.save(FILE_PREFIX + '_scatter_sv.png')
     scatter_hv = scatter_hv.convert('RGB')
     scatter_hv.save(FILE_PREFIX + '_scatter_hv.png')
+
+
+# mask white: force exclusion of this pixel
+def pixel_excluded(rgb):
+    return rgb[0] >= 128  # too red to be either green or black
+
+
+# mask black: force inclusion of this pixel
+def pixel_included(rgb):
+    return rgb[1] < 128  # not enough green to be white or green
 
 
 # construct a compound mask:
@@ -140,8 +159,8 @@ def create_composite_mask(im,
 # converts very unsaturated or very dark pixels only which are outside desired hue range
 # which otherwise in rgb would have arbitrary or 0 hue when they shouldn't
 def convert_greys(im,
-                  bounding_box,
-                  mask_array,
+                  coord_list,
+                  hsv_list,
                   hue_min,
                   hue_max,
                   sat_min,
@@ -155,30 +174,26 @@ def convert_greys(im,
     marker = Image.new(mode="L", size=im.size, color=0)
 
     pixels_converted = 0
-    for x in range(bounding_box[0], bounding_box[1]):
-        for y in range(bounding_box[2], bounding_box[3]):
-            if mask_array[x][y]:
-                coord = (x, y)
-                hsv = im.getpixel(coord)
-                marker.putpixel(coord, 127)
+    for coord, hsv in zip(coord_list, hsv_list):
+        marker.putpixel(coord, 127)
 
-                if hsv[1] < sat_min or hsv[2] < val_min:
-                    new_hue = cm.hue_nearest_bands(hsv[0], hue_min, hue_max)
+        if hsv[1] < sat_min or hsv[2] < val_min:
+            new_hue = cm.hue_nearest_bands(hsv[0], hue_min, hue_max)
 
-                    needs_change = False
-                    if new_hue < hue_min:
-                        new_hue = hue_min
-                        needs_change = True
+            needs_change = False
+            if new_hue < hue_min:
+                new_hue = hue_min
+                needs_change = True
 
-                    if new_hue > hue_max:
-                        new_hue = hue_max
-                        needs_change = True
+            if new_hue > hue_max:
+                new_hue = hue_max
+                needs_change = True
 
-                    if needs_change:
-                        # need some saturation and value to avoid degenerate HSV regions so hue can be reconstructed
-                        im.putpixel(coord, (new_hue % 256, max(2, hsv[1]), max(2, hsv[2])))
-                        marker.putpixel(coord, 255)
-                        pixels_converted += 1
+            if needs_change:
+                # need some saturation and value to avoid degenerate HSV regions so hue can be reconstructed
+                im.putpixel(coord, (new_hue % 256, max(2, hsv[1]), max(2, hsv[2])))
+                marker.putpixel(coord, 255)
+                pixels_converted += 1
 
     im = im.convert('RGB')
     im.save(FILE_PREFIX + f'setWhiteBlackTo{hue_min:3d}to{hue_max:3d}.png')
@@ -220,28 +235,9 @@ def create_hue_rotations(rotation_amount=24):
         im.save(FILE_PREFIX + f'_rot{i:03d}.png')
 
 
-# mask white: force exclusion of this pixel
-def pixel_excluded(rgb):
-    return rgb[0] >= 128  # too red to be either green or black
-
-
-# mask black: force inclusion of this pixel
-def pixel_included(rgb):
-    return rgb[1] < 128  # not enough green to be white or green
-
-
-num_hues = 18
-# even_spaced_hues = [hue for hue in range(0, 360, 360 // num_hues)]
-uneven_spaced_hues = [hue for hue in range(-60, 120, 270 // num_hues)]
-uneven_spaced_hues.extend([hue for hue in range(120, 300, 540 // num_hues)])
-
-
 def preprocess_image_and_mask(im, mask, byte_source_box=None):
-    bounding_box = [mask.size[0], 0, mask.size[1], 0]
-    mask_array = [[False for y in range(mask.size[1])] for x in range(mask.size[0])]
     coord_list = []
     hsv_list = []
-
     hue_counts = [0] * 256
     sat_sum = 0
     val_sum = 0
@@ -254,7 +250,7 @@ def preprocess_image_and_mask(im, mask, byte_source_box=None):
             if pixel_excluded(mask_rgb):
                 continue
 
-            image_hsv = im.getpixel(coord)
+            image_hsv: Tuple[int, int, int] = im.getpixel(coord)
 
             # now either included or conditional 
             # if no source box provided, treat as if it is in i.e. OK
@@ -265,31 +261,20 @@ def preprocess_image_and_mask(im, mask, byte_source_box=None):
                         byte_source_box[4] <= image_hsv[2] <= byte_source_box[5]):
                     continue  # conditional mask region and outside source box (failed)
 
-            mask_array[x][y] = True
             coord_list.append(coord)
             hsv_list.append(image_hsv)
-            if bounding_box[0] > x:
-                bounding_box[0] = x
-            if bounding_box[1] < x:
-                bounding_box[1] = x
-            if bounding_box[2] > y:
-                bounding_box[2] = y
-            if bounding_box[3] < y:
-                bounding_box[3] = y
 
             # dark and desat don't contribute as much to hue, weight appropriately
             hue_counts[image_hsv[0]] += math.sqrt(image_hsv[1]*image_hsv[2])
             sat_sum += image_hsv[1]
             val_sum += image_hsv[2]
 
-    print(bounding_box)
-    print(f'bounding_box size {(bounding_box[1] - bounding_box[0]) * (bounding_box[3] - bounding_box[2])}')
     included_pixel_count = len(coord_list)
     print(f'mask_list size {included_pixel_count}')
 
     avg_hue = 0
     hue_sum = sum(hue_counts)
-    # since hue is cyclical, its average is more complex, depending on the cycle endpoints
+    # hue is cyclical, so average depends on the cycle midpoint, but should stabilize
     hue_midpoint = 128
     while hue_midpoint != avg_hue:  # repeat until stable
         hue_midpoint = avg_hue
@@ -302,11 +287,13 @@ def preprocess_image_and_mask(im, mask, byte_source_box=None):
                   val_sum // included_pixel_count)
     print(f'average hsv: {avg_hsv.to_string_from_bytes()}')
 
-    # necessary padding
-    bounding_box[1] += 1
-    bounding_box[3] += 1
+    return coord_list, hsv_list, avg_hsv
 
-    return bounding_box, mask_array, coord_list, hsv_list, avg_hsv
+
+num_hues = 18
+# even_spaced_hues = [hue for hue in range(0, 360, 360 // num_hues)]
+uneven_spaced_hues = [hue for hue in range(-60, 120, 270 // num_hues)]
+uneven_spaced_hues.extend([hue for hue in range(120, 300, 540 // num_hues)])
 
 
 def target_boxes(source_box, hue_range_scale=1.0):
@@ -356,24 +343,24 @@ def target_boxes(source_box, hue_range_scale=1.0):
     return trgt_bxs
 
 
-def create_conversion_guide(converted_hsv, column_size=16):
+def create_conversion_guide(converted_hsv: List[HSV], column_size=16):
     im = Image.new(mode="HSV", size=(256, 6 * column_size), color=(0, 0, 0))
     drawer = ImageDraw.Draw(im)
 
     for x in range(256):
         drawer.line([x, 0 * column_size, x, 1 * column_size - 1], (x, 255, 255))
-        drawer.line([x, 1 * column_size, x, 2 * column_size - 1], (converted_hsv[0][x], 255, 255))
+        drawer.line([x, 1 * column_size, x, 2 * column_size - 1], (converted_hsv[x].h, 255, 255))
         drawer.line([x, 2 * column_size, x, 3 * column_size - 1], (0, x, 255))
-        drawer.line([x, 3 * column_size, x, 4 * column_size - 1], (0, converted_hsv[1][x], 255))
+        drawer.line([x, 3 * column_size, x, 4 * column_size - 1], (0, converted_hsv[x].s, 255))
         drawer.line([x, 4 * column_size, x, 5 * column_size - 1], (0, 0, x))
-        drawer.line([x, 5 * column_size, x, 6 * column_size - 1], (0, 0, converted_hsv[2][x]))
+        drawer.line([x, 5 * column_size, x, 6 * column_size - 1], (0, 0, converted_hsv[x].v))
 
     im = im.convert('RGB')
     im.save(f'conversion_guide.png')
 
 
 # precompute conversions for each possible byte for HSV
-def box_swap_conversion(target_box, byte_source_box):
+def box_swap_conversion(byte_source_box, target_box):
     converted_hsv = []
 
     byte_target_box = cm.convert_hsv_box_to_bytes(target_box)
@@ -399,39 +386,24 @@ def box_swap_conversion(target_box, byte_source_box):
 # hue_contraction = K: new(h) = h + t - a + aK - hK
 # value of 1 will contract to a point at target_hsv[0], 0 does nothing
 # S and V multiply (or multiply complement) to change average to target
-def average_sv_conversion(target_hsv: HSV, avg_hsv: HSV, hue_contraction=0.0):
+def average_to_target_conversion(avg_hsv: HSV, target_hsv: HSV, hue_contraction=0.0):
 
-    if target_hsv.s <= avg_hsv.s:  # error if both 0
-        msat = target_hsv.s / avg_hsv.s
-
-        def sat_mult(x):
-            return int(x * msat)
-    else:
-        # if target > avg, flip up with down, eg:
-        # target = 75% and avg = 50%, then 10% -> 55% not 15%, 0% -> 50% not 0%, 100% -> 100% not 150%
-        # 75% -> ~25%, 50% -> ~50%, multiplier = 0.5
-        # 10% -> ~90%, * 0.5 = ~45% -> 55%
-        # replace every number by its complement
-        msat = (255 - target_hsv.s) / (255 - avg_hsv.s)
-
-        def sat_mult(x):
-            return int(255 - (255 - x) * msat)
-
-    if target_hsv.v <= avg_hsv.v:
-        mval = target_hsv.v / avg_hsv.v
-
-        def val_mult(x):
-            return int(x * mval)
-    else:
-        mval = (255 - target_hsv.v) / (255 - avg_hsv.v)
-
-        def val_mult(x):
-            return int(255 - (255 - x) * mval)
+    # fails only if target and avg == 0; if avg == 255, target <= avg
+    def SV_mult(x: int, avg: int, target: int):
+        if target <= avg:
+            return x * target // avg
+        else:
+            # if target > avg, flip up with down, eg:
+            # target = 75% and avg = 50%, then 10% -> 55% not 15%, 0% -> 50% not 0%, 100% -> 100% not 150%
+            # 75% -> ~25%, 50% -> ~50%, multiplier = 0.5
+            # 10% -> ~90%, * 0.5 = ~45% -> 55%
+            # replace every number by its complement
+            return 255 - (255 - x) * (255 - target) // (255 - avg)
 
     hue_delta = target_hsv.h - avg_hsv.h
     return [HSV(int((b + hue_delta + hue_contraction * (avg_hsv.h - b))) % 256,
-                sat_mult(b),
-                val_mult(b))
+                SV_mult(b, avg_hsv.s, target_hsv.s),
+                SV_mult(b, avg_hsv.v, target_hsv.v))
             for b in range(256)]
 
 
@@ -491,6 +463,8 @@ def run():
     except FileNotFoundError:
         im = Image.open(FILE_PREFIX + '.png')
 
+    # create_histograms(im)
+    # create_scatterplots(im)
     # create_edge_detection(im, 2)
     # exit(0)
 
@@ -503,20 +477,20 @@ def run():
         mask = Image.open((FILE_PREFIX + 'mask.png'))
     mask = mask.convert('RGB')
 
-    source_box = [90, 175, 10, 100, 5, 95]
+    source_box = [-10, 40, 0, 100, 0, 100]
     byte_source_box = cm.convert_hsv_box_to_bytes(source_box)
 
-    create_composite_mask(im, mask, byte_source_box)
-    #exit(0)
-
-    bounding_box, mask_array, coord_list, hsv_list, avg_hsv = preprocess_image_and_mask(im, mask, byte_source_box)
+    # create_composite_mask(im, mask, byte_source_box)
     # exit(0)
 
-    # create_histograms(im, mask_array)
-    # create_scatterplots(im, mask_array)
+    coord_list, hsv_list, avg_hsv = preprocess_image_and_mask(im, mask, byte_source_box)
     # exit(0)
 
-    # convert_greys(im, bounding_box, mask_array, source_box[0], source_box[1], 9, 9)
+    # create_histograms(im, hsv_list)
+    # create_scatterplots(im, hsv_list)
+    # exit(0)
+
+    # convert_greys(im, coord_list, hsv_list, source_box[0], source_box[1], 9, 9)
     # exit(0)
 
     SVscale = 0.75
@@ -536,7 +510,7 @@ def run():
 
     for target in all_targets:
         create_color_swap(im.copy(),
-                          average_sv_conversion(target, avg_hsv, 0.75),
+                          average_to_target_conversion(avg_hsv, target, 0.75),
                           coord_list,
                           hsv_list,
                           FILE_PREFIX + f'_{target.to_string_from_bytes()}.png')
