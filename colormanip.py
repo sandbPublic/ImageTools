@@ -1,3 +1,4 @@
+import math
 from typing import Tuple, List, Callable
 
 
@@ -87,7 +88,7 @@ def weighted_average_factor(x, start, finish):
     return (x - start)/(finish - start)
 
 
-def linear_combination(a, b, factor):
+def linear_combination(a, b, factor: float):
     return a*(1-factor) + b*factor
 
 
@@ -211,12 +212,76 @@ def box_swap_hsv_fuzzy(color, source_box: List, target_box: List, fuzzy_bands: L
     return tuple(return_color)
 
 
-# returns hue which is congruent mod m which is nearest to center of min and max
-def hue_nearest_bands(old_hue: int, hue_min: int, hue_max: int, m=256) -> int:
-    hue_mid = (hue_min + hue_max)/2
-    while old_hue < hue_mid - m/2:
-        old_hue += m
-    while old_hue > hue_mid + m/2:
-        old_hue -= m
-    return old_hue
+def nearest_congruent(old_x: float, target_x=128.0, m=256.0) -> float:
+    while old_x < target_x - m/2:
+        old_x += m
+    while old_x > target_x + m/2:
+        old_x -= m
+    return old_x
 
+
+def hue_nearest_bands(old_hue: int, hue_min: int, hue_max: int, m=256) -> int:
+    return int(nearest_congruent(old_hue, (hue_min + hue_max) / 2, m))
+
+
+# contracts if downward, expand if upward
+def direct_mult(x: int, avg: int, target: int):
+    return x * target // avg
+
+
+# contracts if upward, expand if downward
+# flip up with down, eg:
+# target = 75% and avg = 50%, then 10% -> 55% not 15%, 0% -> 50% not 0%, 100% -> 100% not 150%
+# 75% -> ~25%, 50% -> ~50%, multiplier = 0.5
+# 10% -> ~90%, * 0.5 = ~45% -> 55%
+# replace every number by its complement
+def complement_mult(x: int, avg: int, target: int):
+    return 255 - (255 - x) * (255 - target) // (255 - avg)
+
+
+# Only contracts. New average is exactly target, but loses dynamic range.
+def up_down_conditional_mult(x: int, avg: int, target: int):
+    if target <= avg:
+        return direct_mult(x, avg, target)
+    else:
+        return complement_mult(x, avg, target)
+
+
+# Better preserves dynamic range, but new average is not exactly target, depending on distribution.
+def low_high_conditional_mult(x: int, avg: int, target: int):
+    if x <= avg:
+        return direct_mult(x, avg, target)
+    else:
+        return complement_mult(x, avg, target)
+
+
+def hybrid_mult(x: int, avg: int, target: int, hybrid_factor: float):
+    return int(linear_combination(up_down_conditional_mult(x, avg, target),
+                                  low_high_conditional_mult(x, avg, target),
+                                  hybrid_factor))
+
+
+# convert saturation and hue values to 2D color space, from circle to square
+# max sat hues around square edge, greyer inside
+# 0,0 is green, 255,255 is magenta
+# first index is red, second purple
+def HS_to_twocolor(hue, sat) -> (int, int):
+    angle = math.pi * hue / 128
+    red = math.cos(angle)
+    green = math.sin(angle)
+
+    radius = sat / (2 * max(abs(red),abs(green)))
+    red *= radius
+    green *= radius
+    red += 128
+    green += 128
+    return int(red), int(green)
+
+
+def twocolor_to_HS(red, green) -> (int, int):
+    red -= 128
+    green -= 128
+    angle = nearest_congruent(math.atan2(green, red), math.pi, 2 * math.pi)
+    hue = 128 * angle / math.pi
+    sat = 2 * max(abs(red), abs(green))
+    return int(hue), int(sat)
